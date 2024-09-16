@@ -273,6 +273,87 @@ func TestApply(t *testing.T) {
 				},
 			},
 		},
+		"removed block with provider-to-component dep": {
+			path: path.Join("auth-provider-w-data", "removed"),
+			state: stackstate.NewStateBuilder().
+				AddComponentInstance(stackstate.NewComponentInstanceBuilder(mustAbsComponentInstance("component.load")).
+					AddDependent(mustAbsComponent("component.create")).
+					AddOutputValue("credentials", cty.StringVal("wrong"))). // must reload the credentials
+				AddComponentInstance(stackstate.NewComponentInstanceBuilder(mustAbsComponentInstance("component.create")).
+					AddDependency(mustAbsComponent("component.load"))).
+				AddResourceInstance(stackstate.NewResourceInstanceBuilder().
+					SetAddr(mustAbsResourceInstanceObject("component.create.testing_resource.resource")).
+					SetResourceInstanceObjectSrc(states.ResourceInstanceObjectSrc{
+						AttrsJSON: mustMarshalJSONAttrs(map[string]interface{}{
+							"id":    "resource",
+							"value": nil,
+						}),
+						Status: states.ObjectReady,
+					}).
+					SetProviderAddr(mustDefaultRootProvider("testing"))).
+				Build(),
+			store: stacks_testing_provider.NewResourceStoreBuilder().AddResource("credentials", cty.ObjectVal(map[string]cty.Value{
+				"id": cty.StringVal("credentials"),
+				// we have the wrong value in state, so this correct value must
+				// be loaded for this test to work.
+				"value": cty.StringVal("authn"),
+			})).Build(),
+			cycles: []TestCycle{
+				{
+					planMode:           plans.NormalMode,
+					wantAppliedChanges: []stackstate.AppliedChange{},
+				},
+			},
+		},
+		"test_one": {
+			path: "test_one",
+			state: stackstate.NewStateBuilder().
+				AddComponentInstance(stackstate.NewComponentInstanceBuilder(mustAbsComponentInstance("component.one")).
+					AddDependent(mustAbsComponent("component.two")).
+					AddInputVariable("value", cty.StringVal("bar")).
+					AddOutputValue("id", cty.StringVal("foo"))).
+				AddResourceInstance(stackstate.NewResourceInstanceBuilder().
+					SetAddr(mustAbsResourceInstanceObject("component.one.testing_resource.resource")).
+					SetProviderAddr(mustDefaultRootProvider("testing")).
+					SetResourceInstanceObjectSrc(states.ResourceInstanceObjectSrc{
+						AttrsJSON: mustMarshalJSONAttrs(map[string]interface{}{
+							"id":    "foo",
+							"value": "bar",
+						}),
+						Status: states.ObjectReady,
+					})).
+				AddComponentInstance(stackstate.NewComponentInstanceBuilder(mustAbsComponentInstance("component.two")).
+					AddDependency(mustAbsComponent("component.one")).
+					AddInputVariable("value", cty.StringVal("foo")).
+					AddOutputValue("id", cty.StringVal("baz"))).
+				AddResourceInstance(stackstate.NewResourceInstanceBuilder().
+					SetAddr(mustAbsResourceInstanceObject("component.two.testing_resource.resource")).
+					SetProviderAddr(mustDefaultRootProvider("testing")).
+					SetResourceInstanceObjectSrc(states.ResourceInstanceObjectSrc{
+						AttrsJSON: mustMarshalJSONAttrs(map[string]interface{}{
+							"id":    "baz",
+							"value": "foo",
+						}),
+						Status: states.ObjectReady,
+					})).
+				Build(),
+			store: stacks_testing_provider.NewResourceStoreBuilder().
+				AddResource("foo", cty.ObjectVal(map[string]cty.Value{
+					"id":    cty.StringVal("foo"),
+					"value": cty.StringVal("bar"),
+				})).
+				AddResource("baz", cty.ObjectVal(map[string]cty.Value{
+					"id":    cty.StringVal("baz"),
+					"value": cty.StringVal("foo"),
+				})).
+				Build(),
+			cycles: []TestCycle{
+				{
+					planMode:           plans.NormalMode,
+					wantAppliedChanges: []stackstate.AppliedChange{},
+				},
+			},
+		},
 	}
 
 	for name, tc := range tcs {
@@ -297,7 +378,9 @@ func TestApply(t *testing.T) {
 				config:    loadMainBundleConfigForTest(t, tc.path),
 				providers: map[addrs.Provider]providers.Factory{
 					addrs.NewDefaultProvider("testing"): func() (providers.Interface, error) {
-						return stacks_testing_provider.NewProviderWithData(t, store), nil
+						provider := stacks_testing_provider.NewProviderWithData(t, store)
+						provider.Authentication = "authn"
+						return provider, nil
 					},
 				},
 				dependencyLocks: *lock,

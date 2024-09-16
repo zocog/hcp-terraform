@@ -81,7 +81,8 @@ func (p *ProviderInstance) ProviderArgsDecoderSpec(ctx context.Context) (hcldec.
 // configuration is invalid. If a provider error occurs, it returns
 // [cty.DynamicVal].
 func (p *ProviderInstance) ProviderArgs(ctx context.Context, phase EvalPhase) cty.Value {
-	v, _ := p.CheckProviderArgs(ctx, phase)
+	v, diags := p.CheckProviderArgs(ctx, phase)
+	fmt.Print(diags)
 	return v
 }
 
@@ -249,6 +250,12 @@ func (p *ProviderInstance) CheckClient(ctx context.Context, phase EvalPhase) (pr
 			// We unmark the config before making the RPC call, as marks cannot
 			// be serialized.
 			unmarkedArgs, _ := p.ProviderArgs(ctx, phase).UnmarkDeep()
+			if unmarkedArgs == cty.NilVal {
+				// Then we had an error previously, so we'll rely on that error
+				// being exposed elsewhere.
+				return stubs.ErroredProvider(), diags
+			}
+
 			resp := client.ConfigureProvider(providers.ConfigureProviderRequest{
 				TerraformVersion: version.SemVer.String(),
 				Config:           unmarkedArgs,
