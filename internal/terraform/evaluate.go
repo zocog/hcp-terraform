@@ -818,6 +818,13 @@ func (d *evaluationStateData) getEphemeralResource(addr addrs.Resource, rng tfdi
 	ephems := d.Evaluator.EphemeralResources
 	getInstValue := func(addr addrs.AbsResourceInstance) (cty.Value, tfdiags.Diagnostics) {
 		var diags tfdiags.Diagnostics
+
+		// If we have a deferred instance with this key we don't need to check if it is live or not,
+		// it has not been created so we can just return the deferred value.
+		if v, ok := instances[addr.Resource.Key]; ok {
+			return v, diags
+		}
+
 		val, isLive := ephems.InstanceValue(addr)
 		if !isLive {
 			// If the instance is no longer "live" by the time we're accessing

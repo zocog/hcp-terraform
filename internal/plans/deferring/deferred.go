@@ -10,6 +10,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/hashicorp/terraform/internal/addrs"
+	"github.com/hashicorp/terraform/internal/lang/marks"
 	"github.com/hashicorp/terraform/internal/plans"
 	"github.com/hashicorp/terraform/internal/providers"
 	"github.com/hashicorp/terraform/internal/tfdiags"
@@ -162,22 +163,12 @@ func (d *Deferred) GetDeferredChanges() []*plans.DeferredResourceInstanceChange 
 			changes = append(changes, changeElem.Value)
 		}
 	}
-	for _, configMapElem := range d.ephemeralResourceInstancesDeferred.Elems {
-		for _, changeElem := range configMapElem.Value.Elems {
-			changes = append(changes, changeElem.Value)
-		}
-	}
 	for _, configMapElem := range d.partialExpandedResourcesDeferred.Elems {
 		for _, changeElem := range configMapElem.Value.Elems {
 			changes = append(changes, changeElem.Value)
 		}
 	}
 	for _, configMapElem := range d.partialExpandedDataSourcesDeferred.Elems {
-		for _, changeElem := range configMapElem.Value.Elems {
-			changes = append(changes, changeElem.Value)
-		}
-	}
-	for _, configMapElem := range d.partialExpandedEphemeralResourceDeferred.Elems {
 		for _, changeElem := range configMapElem.Value.Elems {
 			changes = append(changes, changeElem.Value)
 		}
@@ -293,6 +284,11 @@ func (d *Deferred) GetDeferredResourceInstances(addr addrs.AbsResource) map[addr
 		instanceAddr := elem.Key
 		change := elem.Value
 
+		if addr.Resource.Mode == addrs.EphemeralResourceMode {
+			// Deferred ephemeral resources always have an unknown value.
+			result[instanceAddr.Resource.Key] = cty.UnknownVal(cty.DynamicPseudoType).Mark(marks.Ephemeral)
+			continue
+		}
 		// instances contains all the resources identified by the config address
 		// regardless of the instances of the module they might be in. We need
 		// to filter out the instances that are not part of the module we are
@@ -505,14 +501,7 @@ func (d *Deferred) ReportDataSourceExpansionDeferred(addr addrs.PartialExpandedR
 	})
 }
 
-func (d *Deferred) ReportEphemeralResourceExpansionDeferred(addr addrs.PartialExpandedResource, change *plans.ResourceInstanceChange) {
-	if change == nil {
-		// This indicates a bug in Terraform, we shouldn't ever be setting a
-		// null change. Note, if we don't make this check here, then we'll
-		// just crash later anyway. This way the stack trace points to the
-		// source of the problem.
-		panic("change must not be nil")
-	}
+func (d *Deferred) ReportEphemeralResourceExpansionDeferred(addr addrs.PartialExpandedResource) {
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -536,7 +525,7 @@ func (d *Deferred) ReportEphemeralResourceExpansionDeferred(addr addrs.PartialEx
 	}
 	configMap.Put(addr, &plans.DeferredResourceInstanceChange{
 		DeferredReason: providers.DeferredReasonInstanceCountUnknown,
-		Change:         change,
+		Change:         nil, // since we don't serialize this we can get away with no change, we store the addr, that should be enough
 	})
 }
 
@@ -601,16 +590,9 @@ func (d *Deferred) ReportDataSourceInstanceDeferred(addr addrs.AbsResourceInstan
 	})
 }
 
-func (d *Deferred) ReportEphemeralResourceInstanceDeferred(addr addrs.AbsResourceInstance, reason providers.DeferredReason, change *plans.ResourceInstanceChange) {
+func (d *Deferred) ReportEphemeralResourceInstanceDeferred(addr addrs.AbsResourceInstance, reason providers.DeferredReason) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if change == nil {
-		// This indicates a bug in Terraform, we shouldn't ever be setting a
-		// null change. Note, if we don't make this check here, then we'll
-		// just crash later anyway. This way the stack trace points to the
-		// source of the problem.
-		panic("change must not be nil")
-	}
 
 	configAddr := addr.ConfigResource()
 	if !d.ephemeralResourceInstancesDeferred.Has(configAddr) {
@@ -625,7 +607,7 @@ func (d *Deferred) ReportEphemeralResourceInstanceDeferred(addr addrs.AbsResourc
 	}
 	configMap.Put(addr, &plans.DeferredResourceInstanceChange{
 		DeferredReason: reason,
-		Change:         change,
+		Change:         nil, // Since we don't serialize this we can get away with not storing a change
 	})
 }
 
